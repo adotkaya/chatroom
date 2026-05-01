@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -19,7 +20,7 @@ type Client struct {
 	conn *websocket.Conn
 }
 
-func NewClient(id string, conn *websocket.Conn) *Client {
+func NewClient(conn *websocket.Conn) *Client {
 	ID := rand.Text()[:9]
 	return &Client{
 		ID:   ID,
@@ -40,7 +41,7 @@ func NewServer() *Server {
 	}
 }
 
-func handleWS(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  512,
 		WriteBufferSize: 512,
@@ -50,13 +51,19 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		fmt.Printf("Error on HTTP conn upgrade %v\n", err)
 		return
 	}
-
+	client := NewClient(conn)
+	s.mu.Lock()
+	s.clients = append(s.clients, client)
+	s.mu.Unlock()
 }
 
 func main() {
-	http.HandleFunc("/", handleWS)
+	s := NewServer()
+	http.HandleFunc("/", s.handleWS)
+
+	fmt.Printf("starting server on port : %s\n", WSPort)
 	log.Fatal(http.ListenAndServe(WSPort, nil))
 }
