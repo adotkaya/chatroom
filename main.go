@@ -36,7 +36,7 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		clients: make([]*Client, 0),
+		clients: []*Client{},
 		mu:      new(sync.RWMutex),
 	}
 }
@@ -57,13 +57,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	client := NewClient(conn)
 	s.mu.Lock()
 	s.clients = append(s.clients, client)
+	fmt.Println(len(s.clients))
 	s.mu.Unlock()
 }
 
-func main() {
+func createWSServer() {
 	s := NewServer()
 	http.HandleFunc("/", s.handleWS)
 
 	fmt.Printf("starting server on port : %s\n", WSPort)
 	log.Fatal(http.ListenAndServe(WSPort, nil))
+}
+
+func main() {
+	createWSServer()
 }
