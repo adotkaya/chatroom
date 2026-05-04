@@ -53,7 +53,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		fmt.Printf("Error on HTTP connection upgrade %v\n", err)
+		fmt.Printf("Error on HTTP connection upgrade to Websocket %v\n", err)
 		return
 	}
 	client := NewClient(conn)
