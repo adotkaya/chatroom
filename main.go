@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -34,6 +35,7 @@ type Server struct {
 	mu            *sync.RWMutex
 	joinServerCH  chan *Client
 	leaveServerCH chan *Client
+	broadcastCH   chan *ReqMsg
 }
 
 func NewServer() *Server {
@@ -42,6 +44,35 @@ func NewServer() *Server {
 		mu:            new(sync.RWMutex),
 		joinServerCH:  make(chan *Client, 64),
 		leaveServerCH: make(chan *Client, 64),
+		broadcastCH:   make(chan *ReqMsg, 64),
+	}
+}
+
+type MsgType string
+
+const (
+	MsgType_Broadcast MsgType = "broadcast"
+	MsgType_Join      MsgType = "join"
+	MsgType_Leave     MsgType = "leave"
+)
+
+type ReqMsg struct {
+	Type   MsgType
+	Data   string
+	Client *Client
+}
+
+type RespMsg struct {
+	Type     MsgType
+	Data     string
+	SenderID string
+}
+
+func NewRespMsg(msgType MsgType, data string, senderID string) *RespMsg {
+	return &RespMsg{
+		Type:     msgType,
+		Data:     data,
+		SenderID: senderID,
 	}
 }
 
@@ -62,6 +93,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.joinServerCH <- client
 	s.mu.Unlock()
+	go client.readLoop(s)
 }
 
 func (s *Server) AcceptLoop() {
@@ -71,7 +103,30 @@ func (s *Server) AcceptLoop() {
 			s.joinServer(client)
 		case client := <-s.leaveServerCH:
 			s.leaveServer(client)
+		case msg := <-s.broadcastCH:
+			s.broadcast(msg)
 		}
+	}
+}
+
+func (c *Client) readLoop(srv *Server) {
+	defer func() {
+		c.conn.Close()
+		srv.leaveServerCH <- c
+	}()
+	for {
+		_, b, err := c.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+
+		msg := new(ReqMsg)
+		err = json.Unmarshal(b, msg)
+		if err != nil {
+			fmt.Printf("Error unmarshalling message: %v\n", err)
+			continue
+		}
+		srv.broadcastCH <- msg
 	}
 }
 
@@ -87,6 +142,24 @@ func (s *Server) leaveServer(client *Client) {
 	delete(s.clients, client.ID)
 	fmt.Printf("Client %s left the server: \n", client.ID)
 	s.mu.Unlock()
+}
+
+func (s *Server) broadcast(msg *ReqMsg) {
+	cls := []*Client{}
+	s.mu.RLock()
+	for _, c := range s.clients {
+		if c.ID != msg.Client.ID {
+			cls = append(cls, c)
+		}
+	}
+	s.mu.RUnlock()
+	resp := NewRespMsg(msg.Type, msg.Data, msg.Client.ID)
+	for _, c := range cls {
+		err := c.conn.WriteJSON(resp)
+		if err != nil {
+			fmt.Printf("Error sending message to client %s: %v\n", c.ID, err)
+		}
+	}
 }
 
 func createWSServer() {

@@ -33,14 +33,13 @@ func DialServer(wg *sync.WaitGroup) {
 
 	fmt.Println("connected to server", conn.LocalAddr().String())
 	time.Sleep(1 * time.Second)
-
 }
 
 func TestConnection(t *testing.T) {
 	go createWSServer()
 	time.Sleep(1 * time.Second)
 	config := TestConfig{
-		clientCount: 10,
+		clientCount: 50,
 		wg:          new(sync.WaitGroup),
 	}
 	config.wg.Add(config.clientCount)
@@ -48,5 +47,6 @@ func TestConnection(t *testing.T) {
 		go DialServer(config.wg)
 	}
 	config.wg.Wait()
+	time.Sleep(1 * time.Second)
 	fmt.Println("Test exit")
 }
