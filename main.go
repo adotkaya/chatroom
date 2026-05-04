@@ -30,7 +30,7 @@ func NewClient(conn *websocket.Conn) *Client {
 }
 
 type Server struct {
-	clients       []*Client
+	clients       map[string]*Client
 	mu            *sync.RWMutex
 	joinServerCH  chan *Client
 	leaveServerCH chan *Client
@@ -38,8 +38,10 @@ type Server struct {
 
 func NewServer() *Server {
 	return &Server{
-		clients: []*Client{},
-		mu:      new(sync.RWMutex),
+		clients:       make(map[string]*Client),
+		mu:            new(sync.RWMutex),
+		joinServerCH:  make(chan *Client),
+		leaveServerCH: make(chan *Client),
 	}
 }
 
@@ -58,27 +60,31 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	client := NewClient(conn)
 	s.mu.Lock()
-	s.clients = append(s.clients, client)
-	fmt.Println(len(s.clients))
+	s.joinServerCH <- client
 	s.mu.Unlock()
 }
 
 func (s *Server) AcceptLoop() {
-	select {
-	case client := <-s.joinServerCH:
-		s.mu.Lock()
-		s.clients = append(s.clients, client)
-		s.mu.Unlock()
-	case client := <-s.leaveServerCH:
-		s.mu.Lock()
-		for i, c := range s.clients {
-			if c.ID == client.ID {
-				s.clients = append(s.clients[:i], s.clients[i+1:]...)
-				break
-			}
+	for {
+		select {
+		case client := <-s.joinServerCH:
+			s.joinServer(client)
+		case client := <-s.leaveServerCH:
+			s.leaveServer(client)
 		}
-		s.mu.Unlock()
 	}
+}
+
+func (s *Server) joinServer(client *Client) {
+	s.mu.Lock()
+	s.clients[client.ID] = client
+	s.mu.Unlock()
+}
+
+func (s *Server) leaveServer(client *Client) {
+	s.mu.Lock()
+	delete(s.clients, client.ID)
+	s.mu.Unlock()
 }
 
 func createWSServer() {
