@@ -30,8 +30,10 @@ func NewClient(conn *websocket.Conn) *Client {
 }
 
 type Server struct {
-	clients []*Client
-	mu      *sync.RWMutex
+	clients       []*Client
+	mu            *sync.RWMutex
+	joinServerCH  chan *Client
+	leaveServerCH chan *Client
 }
 
 func NewServer() *Server {
@@ -59,6 +61,24 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	s.clients = append(s.clients, client)
 	fmt.Println(len(s.clients))
 	s.mu.Unlock()
+}
+
+func (s *Server) AcceptLoop() {
+	select {
+	case client := <-s.joinServerCH:
+		s.mu.Lock()
+		s.clients = append(s.clients, client)
+		s.mu.Unlock()
+	case client := <-s.leaveServerCH:
+		s.mu.Lock()
+		for i, c := range s.clients {
+			if c.ID == client.ID {
+				s.clients = append(s.clients[:i], s.clients[i+1:]...)
+				break
+			}
+		}
+		s.mu.Unlock()
+	}
 }
 
 func createWSServer() {
