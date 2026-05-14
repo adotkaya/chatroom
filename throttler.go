@@ -25,9 +25,18 @@ func NewThrottler(msgPerSecond int, exit chan struct{}) *Throttler {
 
 func (t *Throttler) leak(exit chan struct{}) {
 	ticker := time.NewTicker(t.rate)
+	defer func() {
+		ticker.Stop()
+		close(t.outputCH)
+	}()
 	for {
 		select {
 		case <-exit:
+			close(t.inputCH)
+			for msg := range t.inputCH {
+				fmt.Printf("draining msg = %v\n", msg)
+			}
+			fmt.Println("draining done")
 			return
 		case <-ticker.C:
 			select {
