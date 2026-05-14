@@ -25,6 +25,10 @@ const (
 	MsgType_RoomMsg   MsgType = "room-message"
 )
 
+const (
+	DefaultMsgPerSecond = 3
+)
+
 type ReqMsg struct {
 	MsgType MsgType `json:"type"`
 	Client  *Client
@@ -49,22 +53,26 @@ func NewRespMsg(msg *ReqMsg) *RespMsg {
 }
 
 type Client struct {
-	ID    string
-	mu    *sync.RWMutex
-	conn  *websocket.Conn
-	msgCH chan *RespMsg
-	done  chan struct{}
+	ID        string
+	mu        *sync.RWMutex
+	conn      *websocket.Conn
+	msgCH     chan *RespMsg
+	done      chan struct{}
+	throttler *Throttler
 }
 
 func NewClient(conn *websocket.Conn) *Client {
 	ID := rand.Text()[:9]
-	return &Client{
+	c := &Client{
 		ID:    ID,
 		mu:    new(sync.RWMutex),
 		conn:  conn,
 		msgCH: make(chan *RespMsg, 64),
 		done:  make(chan struct{}),
 	}
+	t := NewThrottler(DefaultMsgPerSecond, c.done)
+	c.throttler = t
+	return c
 
 }
 
@@ -103,21 +111,35 @@ func (c *Client) readMsgLoop(srv *Server) {
 			continue
 		}
 		msg.Client = c
+	}
+}
 
-		switch msg.MsgType {
-		case MsgType_Broadcast:
-			srv.broadcastCH <- msg
-		case MsgType_JoinRoom:
-			srv.joinRoomCH <- msg
-		case MsgType_LeaveRoom:
-			srv.leaveRoomCH <- msg
-		case MsgType_RoomMsg:
-			srv.roomMsgCH <- msg
-		default:
-			fmt.Println("unknown msg type -> ignoring it!")
-			// TODO -> return err to client?
+func (c *Client) throttlingLoop(handleMsg func(msg *ReqMsg)) {
+	for {
+		select {
+		case <-c.done:
+			return
+		case msg := <-c.throttler.outputCH:
+			handleMsg(msg)
 		}
 	}
+}
+
+func (srv *Server) handleMsg(msg *ReqMsg) {
+	switch msg.MsgType {
+	case MsgType_Broadcast:
+		srv.broadcastCH <- msg
+	case MsgType_JoinRoom:
+		srv.joinRoomCH <- msg
+	case MsgType_LeaveRoom:
+		srv.leaveRoomCH <- msg
+	case MsgType_RoomMsg:
+		srv.roomMsgCH <- msg
+	default:
+		fmt.Println("unknown msg type -> ignoring it!")
+		// TODO -> return err to client?
+	}
+
 }
 
 type Room struct {
