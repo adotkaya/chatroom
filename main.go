@@ -26,14 +26,14 @@ const (
 )
 
 const (
-	DefaultMsgPerSecond = 3
+	DefaultMsgPerSecond = 10
 )
 
 type ReqMsg struct {
-	MsgType MsgType `json:"type"`
-	Client  *Client
+	MsgType MsgType     `json:"type"`
 	Data    interface{} `json:"data"`
 	RoomID  string      `json:"roomID"`
+	Client  *Client
 }
 
 type RespMsg struct {
@@ -70,10 +70,10 @@ func NewClient(conn *websocket.Conn) *Client {
 		msgCH: make(chan *RespMsg, 64),
 		done:  make(chan struct{}),
 	}
+
 	t := NewThrottler(DefaultMsgPerSecond, c.done)
 	c.throttler = t
 	return c
-
 }
 
 func (c *Client) writeMsgLoop() {
@@ -98,6 +98,8 @@ func (c *Client) readMsgLoop(srv *Server) {
 		srv.leaveServerCH <- c
 	}()
 
+	go c.throttlingLoop(srv.handleMsg)
+
 	for {
 		_, b, err := c.conn.ReadMessage()
 		if err != nil {
@@ -111,6 +113,8 @@ func (c *Client) readMsgLoop(srv *Server) {
 			continue
 		}
 		msg.Client = c
+		// --- done with msg
+		c.throttler.inputCH <- msg
 	}
 }
 
@@ -119,7 +123,10 @@ func (c *Client) throttlingLoop(handleMsg func(msg *ReqMsg)) {
 		select {
 		case <-c.done:
 			return
-		case msg := <-c.throttler.outputCH:
+		case msg, ok := <-c.throttler.outputCH:
+			if !ok {
+				return
+			}
 			handleMsg(msg)
 		}
 	}
@@ -343,10 +350,11 @@ func (s *Server) GetServerTestResults() int {
 
 func (s *Server) createWSServer() {
 	go s.AcceptLoop()
-	http.HandleFunc("/", s.handleWS)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.handleWS)
 
 	fmt.Printf("starting server on port: %s\n", WSPort)
-	log.Fatal(http.ListenAndServe(WSPort, nil))
+	log.Fatal(http.ListenAndServe(WSPort, mux))
 }
 
 // TODO
@@ -356,11 +364,13 @@ func (s *Server) createWSServer() {
 // [x] Add newly connected ws to server
 // [x] Remove client on disconnect
 // [x] Send broadcast msg -> no race conditions
-// -----
 // [x] join room
 // [x] leave room
 // [x] Send room msg -> no race conditions
 // -----
+// [] throttling
+// -----
+// [] rate-limiting
 // [] test performance -> channels vs locks
 // [] meamory leakage -> grafana/prom
 func main() {
